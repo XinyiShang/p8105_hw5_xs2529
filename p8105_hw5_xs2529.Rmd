@@ -1,0 +1,256 @@
+---
+title: "p8105_hw5_xs2529"
+author: "Xinyi Shang"
+date: "2023-11-13"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(broom)
+library(purrr)
+library(dplyr)
+library(readxl)
+```
+
+### Problem 1
+
+```{r import homicide data}
+homicide_df = 
+  read_csv("data/homicide-data.csv")
+```
+This dataframe contains data in homicides in 50 large U.S. cities, gathered by the *Washington Post*. The homicide data has `r nrow(homicide_df)` observations and `r ncol(homicide_df)` columns. The variable names are `r names(homicide_df) `. 
+
+```{r}
+homicide_df_tidy = homicide_df |>
+  janitor::clean_names() |>
+  mutate(city_state = paste(city, state, sep = ", "))
+
+city_summary = homicide_df_tidy|> 
+  group_by(city_state) |>
+  summarise(total_homicides = n(),
+            unsolved_homicides = sum(disposition %in% c("Closed without arrest", "Open/No arrest")))
+
+```
+
+```{r prop test for Baltimore, MD}
+baltimore_data = city_summary |>
+  filter(city_state == "Baltimore, MD")
+baltimore_unsolved = baltimore_data|> select("unsolved_homicides") |> as.numeric()
+baltimore_total = baltimore_data|> select("total_homicides") |> as.numeric()
+
+baltimore_prop_test = prop.test(baltimore_unsolved, baltimore_total)
+
+save(baltimore_prop_test, file = "data/baltimore_prop_test.RData")
+
+baltimore_tidy = broom::tidy(baltimore_prop_test)
+
+baltimore_result = baltimore_tidy |>
+  select(estimate, conf.low, conf.high)
+
+print(baltimore_result)
+
+```
+```{r define prop test function and run for each cities}
+
+#define function
+prop_test_city =  function(city_data) {
+  unsolved = city_data|> select("unsolved_homicides") |> as.numeric()
+  total = city_data|> select("total_homicides") |> as.numeric()
+  prop_test_result = prop.test(unsolved, total)
+  tidy(prop_test_result) |>
+    select(estimate, conf.low, conf.high)
+}
+
+# filter out the city with less or equal to 1 cases
+city_summary = city_summary |>
+  filter(!total_homicides <= 1)
+
+#run prop test
+city_results = city_summary|>
+  group_by(city_state) |>
+  nest() |>
+  mutate(prop_test_results = map(data, prop_test_city)) |>
+  unnest(prop_test_results)|>
+  select(estimate,conf.low,conf.high) |>
+  janitor::clean_names() |>
+  ungroup() |>
+  arrange(estimate)
+
+print(city_results)
+
+```
+
+Tulsa, AL is excluded from the proportional test analysis due to having only one homicide case, which has been solved. This dataset is not appropriate for the proportional test, so it is filtered out from the analysis.
+
+```{r}
+city_results_figure = city_results |>
+  mutate(city_state = as.character(city_state)) |>
+  ggplot(aes(x = fct_reorder(city_state, estimate), y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymax = conf_high, ymin = conf_low))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7)) +
+  labs(title = "Estimates and Confidence Intervals for Unsolved Homicides by City",
+       x = "City, State",
+       y = "Estimated Proportion of Unsolved Homicides")
+
+city_results_figure
+```
+
+In total, there are `r nrow(city_results)` cities in the figures depicting estimates and confidence intervals for Unsolved Homicides by City. The city with the lowest estimated proportion of unsolved homicides is `r (city_results|> head(1))[1]` with an estimated proportion of `r (city_results|> head(1))[2]` and a confidence interval of (`r (city_results|> head(1))[3]`, `r (city_results|> head(1))[4]`). Conversely, the city with the highest estimated proportion of unsolved homicides is `r (city_results|> tail(1))[1]`, showing an estimated proportion of `r (city_results|> tail(1))[2]`, and a confidence interval of (`r (city_results|> tail(1))[3]`, `r (city_results|> tail(1))[4]`).
+
+
+
+### Problem 2
+
+```{r read files, message = FALSE}
+data_path = "data/data_p2"
+
+file_names = list.files(data_path, full.names = TRUE)
+
+
+data_full = map(file_names, ~read_csv(.x) |> 
+                  mutate(file_name = .x)) |> #preserve data file name
+  bind_rows()
+
+save(data_full, file = "data/data_full_p2.RData")
+
+```
+
+```{r data cleaning }
+data_full_tidy = data_full |>
+  separate(file_name, into = c("folder1","folder2","name") , sep = "/") |>
+  separate(name, into = c("arm", "subject_ID"), sep = "_") |>
+  separate(subject_ID, into = c("ID", "suffix"), sep = "\\.") |>
+  janitor::clean_names() |>
+  select("arm","id","week_1","week_2","week_3","week_4","week_5","week_6","week_7","week_8") |>
+  pivot_longer(col =3:10, names_to = "week", values_to = "value")
+
+```
+
+```{r spaghetti plot}
+p2_figure = ggplot(data_full_tidy, aes(x = week, y = value, group = id, color = id))+
+  geom_point()+
+  geom_line()+
+  facet_wrap(~arm)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7)) +
+  labs(title = "Spaghetti Plot of Observations Over Time",
+       x = "Time",
+       y = "Value")
+
+p2_figure
+```
+
+In the control arm, the value remains relatively stable with fluctuations from week 1 to week 8. Conversely, in the experimental arm, there is a observable upward trend in the value from week 1 to week 8. 
+
+### Problem 3
+
+```{r p3 define stimulation function}
+set.seed(1)
+
+# set parameters
+n = 30
+sigma = 5
+alpha = 0.05
+true_values_0 = 0
+true_values = c(0, 1, 2, 3, 4, 5, 6)
+n_trial = 5000
+
+# set function
+simulate_power = function(true_mu) {
+  reject_null = numeric(n_trial)
+  estimate_mu = numeric(n_trial)
+  
+  for (i in 1:n_trial) {
+    #generate data from normal distribution 
+    data = rnorm(n, mean = true_mu, sd = sigma)
+    result = t.test(data, mu = 0) |>  
+      broom::tidy() |> 
+      janitor::clean_names()
+    
+    # Save results for each trial
+    reject_null[i] = result |> 
+      select(p_value) < alpha
+    estimate_mu[i] = result |> 
+      select(estimate) |> 
+      as.numeric()
+  }
+  
+  #return result as tibble data frame
+  return(tibble(
+    true_mu = rep(true_mu, n_trial),
+    reject_null = reject_null,
+    estimate_mu = estimate_mu
+  ))
+}
+
+```
+
+``` {r p3 run simulation for mu is 0}
+
+# Run simulations
+sim_results_0 = map(true_values_0, simulate_power) |> 
+  bind_rows()
+print(sim_results_0)
+```
+
+At $\mu = 0$, the average estimate of $\hat{\mu}$ is `r (sim_results_0 |> select(estimate_mu))[[1]] |> mean()`. Out of `r nrow(sim_results_0)` trials, `r sim_results_0 |> filter(reject_null == 1) |> nrow()` resulted in rejecting the null hypothesis $H: \mu = 0$. 
+
+``` {r p3 run simulation for all mu}
+
+sim_results = map_df(true_values, simulate_power) |> 
+  bind_rows() 
+
+save(sim_results, file = "data/p3_sim_result.RData")
+
+print(sim_results)
+```
+
+``` {r p3 analysis and plotting - power vs. true mu}
+power_results = sim_results |> 
+  group_by(true_mu) |> 
+  summarize(power = sum(reject_null) / n_trial)
+
+#Power vs. True μ
+ggplot(power_results, aes(x = true_mu, y = power)) +
+  geom_point() +
+  geom_line() +
+  labs(title = "Power vs. True μ",
+       x = "True μ",
+       y = "Power")
+
+```
+
+The power increases with the increase of the true $\mu$. This is attributed to the increase of the probability of rejecting the null hypothesis $H: \mu = 0$ as the true $\mu$ increases. Consequently, the power, which is the proportion of times where the null hypothesis is rejected, is expected to show an upward trend, and eventually close to $1$. 
+
+
+```{r p3 analysis and plotting - estimate mu vs. estimate mu reject}
+# Average Estimate of μ^ vs. True μ
+estimate_results = sim_results |>
+  mutate(reject = estimate_mu * reject_null) |>
+  group_by(true_mu) |>
+  summarize(
+    avg_estimate_mu = mean(estimate_mu),
+    avg_estimate_mu_reject = mean(reject)
+  ) |>
+  pivot_longer(
+    cols = c(avg_estimate_mu, avg_estimate_mu_reject),
+    names_to = "estimate_mu_group",
+    values_to = "values"
+  )
+
+ggplot(estimate_results, aes(x = true_mu, y = values, group = estimate_mu_group, color = estimate_mu_group)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Average Estimate of μ^ vs. True μ",
+       x = "True μ",
+       y = "Average Estimate of μ^")
+
+```
+
+The average estimate of $\hat{\mu}$ tends to approach the true value of $\mu$, as $\mu$ increases. This occurs because as the true $\mu$ moves further from zero, the likelihood of rejecting the null hypothesis increases. Consequently, the rejected group's $\hat{\mu}$ values move closer to the true $\mu$. Therefore, the average estimate $\hat{\mu}$ for the rejected cases should converge to the overall average estimate of $\hat{\mu}$.
+
