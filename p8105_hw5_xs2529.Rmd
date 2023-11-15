@@ -162,6 +162,7 @@ n_trial = 5000
 
 # set function
 simulate_power = function(true_mu) {
+  p_value = numeric(n_trial)
   reject_null = numeric(n_trial)
   estimate_mu = numeric(n_trial)
   
@@ -173,6 +174,9 @@ simulate_power = function(true_mu) {
       janitor::clean_names()
     
     # Save results for each trial
+    p_value[i] = result |> 
+      select(p_value)|> 
+      as.numeric()
     reject_null[i] = result |> 
       select(p_value) < alpha
     estimate_mu[i] = result |> 
@@ -183,6 +187,7 @@ simulate_power = function(true_mu) {
   #return result as tibble data frame
   return(tibble(
     true_mu = rep(true_mu, n_trial),
+    p_value = p_value,
     reject_null = reject_null,
     estimate_mu = estimate_mu
   ))
@@ -198,7 +203,7 @@ sim_results_0 = map(true_values_0, simulate_power) |>
 print(sim_results_0)
 ```
 
-At $\mu = 0$, the average estimate of $\hat{\mu}$ is `r (sim_results_0 |> select(estimate_mu))[[1]] |> mean()`. Out of `r nrow(sim_results_0)` trials, `r sim_results_0 |> filter(reject_null == 1) |> nrow()` resulted in rejecting the null hypothesis $H: \mu = 0$. 
+At $\mu = 0$, the average estimate of $\hat{\mu}$ is `r (sim_results_0 |> select(estimate_mu))[[1]] |> mean()`. Out of `r nrow(sim_results_0)` trials, `r sim_results_0 |> filter(reject_null == 1) |> nrow()` resulted in rejecting the null hypothesis $H_0: \mu = 0$, so the power of the test is `r ((sim_results_0 |> filter(reject_null == 1) |> nrow()) / nrow(sim_results_0)) |> as.numeric()`
 
 ``` {r p3 run simulation for all mu}
 
@@ -225,18 +230,24 @@ ggplot(power_results, aes(x = true_mu, y = power)) +
 
 ```
 
-The power increases with the increase of the true $\mu$. This is attributed to the increase of the probability of rejecting the null hypothesis $H: \mu = 0$ as the true $\mu$ increases. Consequently, the power, which is the proportion of times where the null hypothesis is rejected, is expected to show an upward trend, and eventually close to $1$. 
+The power increases with the increase of the true $\mu$. This is attributed to the increase of the probability of rejecting the null hypothesis $H_0: \mu = 0$ as the true $\mu$ increases. Consequently, the power, which is the proportion of times where the null hypothesis is rejected, is expected to show an upward trend, and eventually close to $1$. 
 
 
 ```{r p3 analysis and plotting - estimate mu vs. estimate mu reject}
 # Average Estimate of μ^ vs. True μ
-estimate_results = sim_results |>
-  mutate(reject = estimate_mu * reject_null) |>
+average_estimate_results = sim_results |>
   group_by(true_mu) |>
   summarize(
-    avg_estimate_mu = mean(estimate_mu),
-    avg_estimate_mu_reject = mean(reject)
+    avg_estimate_mu = mean(estimate_mu)
+  )
+
+estimate_results = sim_results |>
+  filter(reject_null == 1) |>
+  group_by(true_mu) |>
+  summarize(
+    avg_estimate_mu_reject = mean(estimate_mu)
   ) |>
+  full_join(average_estimate_results, join_by(true_mu)) |>
   pivot_longer(
     cols = c(avg_estimate_mu, avg_estimate_mu_reject),
     names_to = "estimate_mu_group",
@@ -252,5 +263,9 @@ ggplot(estimate_results, aes(x = true_mu, y = values, group = estimate_mu_group,
 
 ```
 
-The average estimate of $\hat{\mu}$ tends to approach the true value of $\mu$, as $\mu$ increases. This occurs because as the true $\mu$ moves further from zero, the likelihood of rejecting the null hypothesis increases. Consequently, the rejected group's $\hat{\mu}$ values move closer to the true $\mu$. Therefore, the average estimate $\hat{\mu}$ for the rejected cases should converge to the overall average estimate of $\hat{\mu}$.
+When the true mean, denoted as $\mu$, is equal to zero, both the overall average estimate $\hat{\mu}$ and the rejected group's $\hat{\mu}$ are expected to center around zero.
+
+Subsequently, the average estimate $\hat{\mu}$ for the rejected group exhibits a slight elevation compared to the overall group's average estimate $\hat{\mu}$. This divergence arises because, with an increasing true $\mu$, the group that fails to reject the null hypothesis $H_0: \mu = 0$ tends to have a $\hat{\mu}$ closer to zero. Conversely, the group that rejects the null hypothesis $H_1: \mu \neq 0$ tends to exhibit a $\hat{\mu}$ higher than that, because the true $\mu$ is higher than 0. 
+
+As the true $\mu$ continues to increase, the average estimate $\hat{\mu}$ of the rejected group gradually approaches the overall average estimate of $\hat{\mu}$. This phenomenon is attributable to the fact that, as the true $\mu$ deviates further from zero, the probability of rejecting the null hypothesis rises. Consequently, the $\hat{\mu}$ values for the rejected group move closer to the overall group's $\hat{\mu}$. Consequently, the average estimate $\hat{\mu}$ for the rejected cases should converge toward the overall average estimate of $\hat{\mu}$.
 
